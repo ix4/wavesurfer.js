@@ -69,6 +69,8 @@ import MediaElementWebAudio from './mediaelement-webaudio';
  * pixels.
  * @property {boolean} hideScrollbar=false Whether to hide the horizontal
  * scrollbar when one would normally be shown.
+ * @property {boolean} ignoreSilenceMode=false If true, ignores device silence mode
+ * when using the `WebAudio` backend.
  * @property {boolean} interact=true Whether the mouse interaction will be
  * enabled at initialization. You can switch this parameter at any time later
  * on.
@@ -268,6 +270,7 @@ export default class WaveSurfer extends util.Observer {
         forceDecode: false,
         height: 128,
         hideScrollbar: false,
+        ignoreSilenceMode: false,
         interact: true,
         loopSelection: true,
         maxCanvasWidth: 4000,
@@ -813,6 +816,11 @@ export default class WaveSurfer extends util.Observer {
      * wavesurfer.play(1, 5);
      */
     play(start, end) {
+        if (this.params.ignoreSilenceMode) {
+            // ignores device hardware silence mode
+            util.ignoreSilenceMode();
+        }
+
         this.fireEvent('interaction', () => this.play(start, end));
         return this.backend.play(start, end);
     }
@@ -1538,19 +1546,21 @@ export default class WaveSurfer extends util.Observer {
      * @param {function} callback The function to call on complete
      */
     decodeArrayBuffer(arraybuffer, callback) {
-        this.arraybuffer = arraybuffer;
-        this.backend.decodeArrayBuffer(
-            arraybuffer,
-            data => {
-                // Only use the decoded data if we haven't been destroyed or
-                // another decode started in the meantime
-                if (!this.isDestroyed && this.arraybuffer == arraybuffer) {
-                    callback(data);
-                    this.arraybuffer = null;
-                }
-            },
-            () => this.fireEvent('error', 'Error decoding audiobuffer')
-        );
+        if (!this.isDestroyed) {
+            this.arraybuffer = arraybuffer;
+            this.backend.decodeArrayBuffer(
+                arraybuffer,
+                data => {
+                    // Only use the decoded data if we haven't been destroyed or
+                    // another decode started in the meantime
+                    if (!this.isDestroyed && this.arraybuffer == arraybuffer) {
+                        callback(data);
+                        this.arraybuffer = null;
+                    }
+                },
+                () => this.fireEvent('error', 'Error decoding audiobuffer')
+            );
+        }
     }
 
     /**
@@ -1610,7 +1620,8 @@ export default class WaveSurfer extends util.Observer {
     }
 
     /**
-     * Exports PCM data into a JSON array and opens in a new window.
+     * Exports PCM data into a JSON array and optionally opens in a new window
+     * as valid JSON Blob instance.
      *
      * @param {number} length=1024 The scale in which to export the peaks
      * @param {number} accuracy=10000
@@ -1630,16 +1641,18 @@ export default class WaveSurfer extends util.Observer {
             peaks,
             val => Math.round(val * accuracy) / accuracy
         );
-        return new Promise((resolve, reject) => {
-            const json = JSON.stringify(arr);
 
-            if (!noWindow) {
-                window.open(
-                    'data:application/json;charset=utf-8,' +
-                        encodeURIComponent(json)
+        return new Promise((resolve, reject) => {
+            if (!noWindow){
+                const blobJSON = new Blob(
+                    [JSON.stringify(arr)],
+                    {type: 'application/json;charset=utf-8'}
                 );
+                const objURL = URL.createObjectURL(blobJSON);
+                window.open(objURL);
+                URL.revokeObjectURL(objURL);
             }
-            resolve(json);
+            resolve(arr);
         });
     }
 
